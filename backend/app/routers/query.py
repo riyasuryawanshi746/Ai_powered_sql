@@ -1,5 +1,7 @@
 """
 Query Router: handles the full NL → SQL → Execute → Insights pipeline.
+LLM calls now go through app.services.llm_service (Groq-backed).
+Chart selection is fully rule-based — zero LLM calls for that step.
 """
 import json
 import uuid
@@ -11,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, QueryHistory, UploadedTable
 from app.models.query import QueryRequest, QueryResponse, ChartConfig
 from app.models.upload import ColumnInfo
-from app.services.gemini_service import generate_sql, generate_insights
+from app.services.grok_llm_service import generate_sql, generate_insights
 from app.services.sql_service import validate_sql, execute_sql
 from app.utils.chart_selector import select_chart
 
@@ -23,13 +25,14 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)):
     """
     Full pipeline:
     1. Load schema from DB
-    2. Send schema + question to Gemini → get SQL
-    3. Validate SQL
+    2. Send schema + question to Groq → get SQL      (1 LLM call)
+    3. Validate SQL (rule-based, no LLM)
     4. Execute SQL against SQLite
-    5. Select chart type from results
-    6. Generate AI insights
+    5. Select chart type (rule-based, no LLM)
+    6. Generate AI insights                           (1 LLM call, conditional)
     7. Save to history
     8. Return everything
+    Total: 1–2 LLM calls per user query (down from 2–3 with Gemini)
     """
     query_id = str(uuid.uuid4())
 
@@ -42,16 +45,17 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)):
 
     columns = [ColumnInfo(**c) for c in json.loads(table_record.schema_json)]
 
-    # ── 2. Generate SQL via Gemini ────────────────────────────────────────────
+    # ── 2. Generate SQL via Groq ──────────────────────────────────────────────
     try:
         sql = generate_sql(table_record.table_name, columns, request.question)
+        print("\nGenerated SQL:")
+        print(repr(sql))
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
     # ── 3. Validate SQL ───────────────────────────────────────────────────────
     is_valid, validation_error = validate_sql(sql)
     if not is_valid:
-        # Save failed query to history
         _save_history(
             db, query_id, request.table_id, table_record.table_name,
             request.question, sql, [], "none", None, [], 0,
@@ -76,10 +80,10 @@ def run_query(request: QueryRequest, db: Session = Depends(get_db)):
             detail=f"SQL execution error: {exec_error}",
         )
 
-    # ── 5. Select chart type ──────────────────────────────────────────────────
+    # ── 5. Select chart type (pure rule engine, no LLM) ───────────────────────
     chart_type, chart_config = select_chart(results)
 
-    # ── 6. Generate insights ──────────────────────────────────────────────────
+    # ── 6. Generate insights (Groq, conditional) ──────────────────────────────
     insights = generate_insights(request.question, sql, results, table_record.table_name)
 
     # ── 7. Save to history ────────────────────────────────────────────────────
@@ -126,7 +130,7 @@ def _save_history(
         table_name=table_name,
         question=question,
         sql_query=sql,
-        results_json=json.dumps(results[:100], default=str),  # store first 100 rows
+        results_json=json.dumps(results[:100], default=str),
         chart_type=chart_type,
         chart_config_json=json.dumps(chart_config) if chart_config else None,
         insights_json=json.dumps(insights),

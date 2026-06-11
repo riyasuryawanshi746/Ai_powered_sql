@@ -38,21 +38,22 @@ app.include_router(history.router)
 # ─── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 def on_startup():
-    """Initialize DB tables and upload directory on startup."""
     create_tables()
     os.makedirs(settings.upload_dir, exist_ok=True)
     print("✅ Database initialized")
     print(f"✅ Upload directory: {settings.upload_dir}")
-    if not settings.gemini_api_key:
-        print("⚠️  WARNING: GEMINI_API_KEY is not set!")
+    if not settings.groq_api_key:
+        print("⚠️  WARNING: GROQ_API_KEY is not set!")
+    else:
+        print("✅ Groq API key configured")
 
 
-# ─── Health Check ─────────────────────────────────────────────────────────────
+# ─── Health Check ──────────────────────────────────────────────────────────────
 @app.get("/api/health", tags=["health"])
 def health_check():
     return {
         "status": "ok",
-        "gemini_configured": bool(settings.gemini_api_key),
+        "groq_configured": bool(settings.groq_api_key),
     }
 
 

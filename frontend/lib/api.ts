@@ -54,11 +54,17 @@ export async function getSchema(tableId: string): Promise<TableSchema> {
 // ─── Query ─────────────────────────────────────────────────────────────────────
 
 export async function runQuery(payload: QueryRequest): Promise<QueryResponse> {
+  console.log("QUERY PAYLOAD", payload);
+
   const res = await fetch(`${BASE_URL}/api/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+
+  console.log("STATUS", res.status);
+  console.log("BODY", await res.clone().text());
+
   return handleResponse<QueryResponse>(res);
 }
 
@@ -80,7 +86,10 @@ export async function deleteHistoryItem(queryId: string): Promise<void> {
 
 // ─── Health ────────────────────────────────────────────────────────────────────
 
-export async function checkHealth(): Promise<{ status: string; gemini_configured: boolean }> {
+export async function checkHealth(): Promise<{
+  status: string;
+  gemini_configured: boolean;
+}> {
   const res = await fetch(`${BASE_URL}/api/health`);
   return handleResponse(res);
 }
